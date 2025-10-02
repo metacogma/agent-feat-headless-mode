@@ -6,6 +6,8 @@ config.yaml
 .tmp/
 assets
 configuration/
-executions/
+# Allow test files but ignore execution results
+executions/*
+!executions/tests/
 agent
 agent.exe
