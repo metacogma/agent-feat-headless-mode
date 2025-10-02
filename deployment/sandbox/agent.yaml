@@ -1,0 +1,71 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-sandbox
+  namespace: autotest
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      service: agent-sandbox
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-sandbox
+  namespace: autotest
+  annotations:
+    iam.gke.io/gcp-service-account: autotest-workload@op-apxor-dev.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: agent-sandbox
+  name: agent-sandbox
+  namespace: autotest
+spec:
+  type: NodePort
+  ports:
+    - name: agent-sandbox-http
+      port: 9123
+      targetPort: 9123
+      nodePort: 30008
+  selector:
+    name: agent-sandbox
+    service: agent-sandbox
+---
+apiVersion: v1
+data:
+  machine_config.json: |-
+    {
+    "application": "agent",
+    "logger": {
+      "Level": "info",
+      "HostName": "local-agent-pod"
+    },
+    "listen": ":5656",
+    "server_domain": "https://op.server.apxor.com/aurora-sandbox/v1",
+    "execution_service_domain": "https://op.server.apxor.com/executor-sandbox/v1",
+    "dashboard_domain": "http://localhost:3000",
+    "prefix": "/agent",
+    "hostname": "local-agent-pod",
+    "machine_id": "b3b9e3a3-7fc8-4cf2-875e-5cedc8b1cf5b",
+    "cors": {
+      "AllowedOrigins": [
+        "http://*.apxor.com",
+        "https://*.apxor.com",
+        "https://internal.cors.com",
+        "https://localhost",
+        "https://localhost:3000",
+        "http://localhost:3000"
+      ]
+    },
+    "project_id": "66ed60d93bd621386faba8bf"
+    }
+kind: ConfigMap
+metadata:
+  name: agent-sandbox-go-config
+  namespace: autotest
+---
+

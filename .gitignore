@@ -1,0 +1,11 @@
+.vscode/
+.idea/
+.docker/
+docker/
+config.yaml
+.tmp/
+assets
+configuration/
+executions/
+agent
+agent.exe

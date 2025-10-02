@@ -1,0 +1,52 @@
+version: '3.8'
+
+# Simplified test environment for ARM64 (M1/M2 Macs)
+
+services:
+  # MongoDB for session storage
+  mongodb:
+    image: mongodb/mongodb-community-server:6.0-ubi8
+    container_name: agent_test_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: admin
+      MONGODB_INITDB_ROOT_PASSWORD: testpass123
+    volumes:
+      - mongodb_test_data:/data/db
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: agent_test_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_test_data:/data
+
+  # MinIO for S3-compatible storage
+  minio:
+    image: minio/minio:latest
+    container_name: agent_test_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_test_data:/data
+
+  # Simple HTTP server for testing
+  httpbin:
+    image: kennethreitz/httpbin
+    container_name: agent_test_httpbin
+    ports:
+      - "8080:80"
+
+volumes:
+  mongodb_test_data:
+  redis_test_data:
+  minio_test_data:

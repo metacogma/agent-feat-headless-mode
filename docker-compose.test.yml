@@ -1,0 +1,138 @@
+version: '3.8'
+
+# nkk: Complete testing environment with all dependencies
+# This allows running tests without affecting production environment
+
+services:
+  # MongoDB for session storage
+  mongodb:
+    image: mongo:latest
+    platform: linux/amd64
+    container_name: agent_test_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: testpass123
+      MONGO_INITDB_DATABASE: testrunner
+    volumes:
+      - mongodb_test_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: agent_test_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO for S3-compatible storage
+  minio:
+    image: minio/minio:latest
+    container_name: agent_test_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_test_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # nkk: Playwright server for modern browser testing
+  # Superior to Selenium - faster, more reliable, better API
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.40.0-focal
+    container_name: agent_test_playwright
+    ports:
+      - "3000:3000"  # Playwright server port
+    environment:
+      # nkk: Enable all browser engines
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 0
+    command: npx playwright run-server --port 3000 --host 0.0.0.0
+    shm_size: 2gb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # Stripe Mock for payment testing
+  stripe-mock:
+    image: stripe/stripe-mock:latest
+    container_name: agent_test_stripe
+    ports:
+      - "12111:12111"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:12111/v1/charges"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: agent_test_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./test/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_test_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # Grafana for monitoring
+  grafana:
+    image: grafana/grafana:latest
+    container_name: agent_test_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_test_data:/var/lib/grafana
+
+  # Test HTTP server for tunnel testing
+  test-server:
+    image: kennethreitz/httpbin
+    container_name: agent_test_httpbin
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/status/200"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodb_test_data:
+  redis_test_data:
+  minio_test_data:
+  prometheus_test_data:
+  grafana_test_data:
+
+networks:
+  default:
+    name: agent_test_network
+    driver: bridge

@@ -1,0 +1,64 @@
+stages:
+  - build
+
+variables:
+  GO_VERSION: "1.23.0"
+  NODE_VERSION: "20"
+
+image: "node:${NODE_VERSION}-alpine"
+
+cache:
+  key:
+    files:
+      - executions/package-lock.json
+      - go.sum
+  paths:
+    - executions/node_modules/
+    - /go/pkg/mod
+    - /root/.cache/go-build
+
+before_script:
+  - echo "Using Go $GO_VERSION and Node.js $NODE_VERSION"
+  - apk add --no-cache curl unzip zip
+  - curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xzf -
+  - export PATH=$PATH:/usr/local/go/bin
+  - go version
+  - node -v
+  - cd executions && npm ci && cd -
+  - npm install -g esbuild
+
+build-linux:
+  stage: build
+  script:
+    - GOOS=linux GOARCH=amd64 go build -o ./agent ./cmd/agent/main.go
+    - esbuild executions/tests/fixture.ts --bundle --minify --platform=node --external:fs --external:path --external:@playwright/test --external:../../configuration/machine_config.json --outfile=dist/fixture.js
+    - mv dist/fixture.js executions/tests/fixture.js
+    - mkdir -p configuration
+    - echo '{"application":"agent","logger":{"Level":"debug","HostName":""},"listen":":5000","server_domain":"https://op.server.apxor.com/aurora-sandbox/v1","execution_service_domain":"https://op.server.apxor.com/executor-sandbox/v1","dashboard_domain":"https://autotest.apxor.com","prefix":"/agent","hostname":"","machine_id":"","cors":{"AllowedOrigins":["http://*.apxor.com","https://*.apxor.com","https://internal.cors.com","https://localhost","https://localhost:3000","http://localhost:3000"]},"project_id":"66ed60d93bd621386faba8bf","org_id":"67c939ec8e27aaa232958763"}' > configuration/machine_config.json
+  artifacts:
+    paths:
+      - agent
+      - executions/package.json
+      - executions/package-lock.json
+      - executions/playwright.config.js
+      - executions/tests/fixture.js
+      - configuration/machine_config.json
+  when: manual
+
+build-windows:
+  stage: build
+  script:
+    - GOOS=windows GOARCH=amd64 go build -o ./agent.exe ./cmd/agent/main.go
+    - esbuild executions/tests/fixture.ts --bundle --minify --platform=node --external:fs --external:path --external:@playwright/test --external:../../configuration/machine_config.json --outfile=dist/fixture.js
+    - mv dist/fixture.js executions/tests/fixture.js
+    - mkdir -p configuration
+    - echo '{"application":"agent","logger":{"Level":"debug","HostName":""},"listen":":5000","server_domain":"https://op.server.apxor.com/aurora-sandbox/v1","execution_service_domain":"https://op.server.apxor.com/executor-sandbox/v1","dashboard_domain":"https://autotest.apxor.com","prefix":"/agent","hostname":"","machine_id":"","cors":{"AllowedOrigins":["http://*.apxor.com","https://*.apxor.com","https://internal.cors.com","https://localhost","https://localhost:3000","http://localhost:3000"]},"project_id":"66ed60d93bd621386faba8bf","org_id":"67c939ec8e27aaa232958763"}' > configuration/machine_config.json
+  artifacts:
+    paths:
+      - agent.exe
+      - executions/package.json
+      - executions/package-lock.json
+      - executions/playwright.config.js
+      - executions/tests/fixture.js
+      - configuration/machine_config.json
+  when: manual
