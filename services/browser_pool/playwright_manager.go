@@ -169,7 +169,7 @@ func (m *PlaywrightPoolManager) createBrowserInstance(browserType string) (*Play
 
 	// nkk: Create isolated browser context with realistic settings
 	contextOptions := playwright.BrowserNewContextOptions{
-		ViewportSize: &playwright.Size{
+		Viewport: &playwright.Size{
 			Width:  1920,
 			Height: 1080,
 		},

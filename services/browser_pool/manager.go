@@ -60,19 +60,23 @@ type BrowserPoolManager struct {
 
 // nkk: Simple constructor - no over-engineering
 func NewBrowserPoolManager(maxSize int) (*BrowserPoolManager, error) {
-	// nkk: Initialize Docker client with connection pool limits
+	// nkk: Initialize Docker client with proper socket detection
+	// Try different Docker socket paths for Mac/Linux compatibility
 	docker, err := client.NewClientWithOpts(
 		client.FromEnv,
-		client.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				MaxIdleConnsPerHost: 5,
-				MaxConnsPerHost:     10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-			Timeout: 30 * time.Second,
-		}),
+		client.WithAPIVersionNegotiation(), // Auto-negotiate API version
 	)
+
+	// If that fails, try explicit socket paths
+	if err != nil {
+		// Try Unix socket (standard location)
+		docker, err = client.NewClientWithOpts(
+			client.WithHost("unix:///var/run/docker.sock"),
+			client.WithAPIVersionNegotiation(),
+		)
+	}
+
+	// HTTP client is configured at initialization, not after
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
@@ -183,10 +187,16 @@ func (m *BrowserPoolManager) ReleaseBrowser(browser, version string, instance *B
 
 // createBrowserContainer creates a new Docker container
 func (m *BrowserPoolManager) createBrowserContainer(browser, version string) (*BrowserInstance, error) {
-	// nkk: Could use either Selenium or Playwright Docker images
-	// For Playwright: mcr.microsoft.com/playwright:v1.40.0-focal
-	// For now using Selenium for WebDriver compatibility
-	image := fmt.Sprintf("selenium/standalone-%s:latest", browser)
+	// nkk: Use ARM64 compatible image for Mac M1/M2
+	// seleniarm images work on ARM64 architecture
+	var image string
+	if browser == "chrome" || browser == "chromium" {
+		image = "seleniarm/standalone-chromium:latest"
+	} else if browser == "firefox" {
+		image = "seleniarm/standalone-firefox:latest"
+	} else {
+		image = fmt.Sprintf("seleniarm/standalone-%s:latest", browser)
+	}
 
 	// nkk: Simple container config
 	config := &container.Config{

@@ -33,13 +33,17 @@ func main() {
 	// Create services
 	fmt.Println("\n📦 Initializing Services...")
 
-	// Browser Pool (will work if Docker is available)
-	browserPool, err := browser_pool.NewBrowserPoolManager(5)
+	// nkk: Test Docker pool with ARM64 compatible images
+	var browserPool *browser_pool.BrowserPoolManager
+	var err error
+
+	browserPool, err = browser_pool.NewBrowserPoolManager(5)
 	if err != nil {
-		fmt.Printf("⚠️  Browser Pool: Docker not available (skipping)\n")
+		fmt.Printf("⚠️  Browser Pool: Not available (Docker issue: %v)\n", err)
 		browserPool = nil
 	} else {
-		fmt.Printf("✅ Browser Pool: Initialized with 5 slots\n")
+		fmt.Printf("✅ Docker Browser Pool: Initialized with 5 slots\n")
+		defer browserPool.Shutdown()
 	}
 
 	// Other services (work without external dependencies)
@@ -58,7 +62,8 @@ func main() {
 	sessionRecorder := recorder.NewSessionRecorder()
 	fmt.Printf("✅ Session Recorder: Initialized\n")
 
-	// Create health handler
+	// nkk: Create health handler - pass Docker pool for compatibility
+	// Health handler expects BrowserPoolManager type, not Playwright
 	healthHandler := health.NewHealthHandler(
 		browserPool,
 		tunnelService,
@@ -87,8 +92,10 @@ func main() {
 
 	// nkk: Real API endpoints for test client compatibility
 	// Browser Pool endpoints
-	http.HandleFunc("/browser/acquire", handleBrowserAcquire(browserPool))
-	http.HandleFunc("/browser/release", handleBrowserRelease(browserPool))
+	if browserPool != nil {
+		http.HandleFunc("/browser/acquire", handleBrowserAcquire(browserPool))
+		http.HandleFunc("/browser/release", handleBrowserRelease(browserPool))
+	}
 
 	// Recording endpoints
 	http.HandleFunc("/recording/start", handleRecordingStart(sessionRecorder))
@@ -560,6 +567,51 @@ func handleSessionRelease(tm *tenant.Manager) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"org_id": req.OrgID,
+			"status": "released",
+		})
+	}
+}
+
+// nkk: Playwright-specific handlers for browser operations
+func handlePlaywrightAcquire(pool *browser_pool.PlaywrightPoolManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Browser string `json:"browser"`
+			Version string `json:"version"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		if req.Browser == "" {
+			req.Browser = "chromium"
+		}
+
+		instance, err := pool.AcquireBrowser(r.Context(), req.Browser, req.Version)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"browser_id": instance.ID,
+			"type": instance.BrowserType,
+			"status": "acquired",
+		})
+	}
+}
+
+func handlePlaywrightRelease(pool *browser_pool.PlaywrightPoolManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			BrowserID string `json:"browser_id"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+
+		// For demo, we just acknowledge the release
+		// In real implementation, you'd track instances by ID
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"browser_id": req.BrowserID,
 			"status": "released",
 		})
 	}
