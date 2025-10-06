@@ -122,7 +122,7 @@ func (t *TestExecutor) Execute(ctx context.Context, orgId, projectId, appId, cre
 	}
 	defer t.browserPool.ReleaseBrowser(localTestConfig.Browser, "latest", browserInstance)
 
-	cmd := exec.CommandContext(commandContext, "npx", "playwright", "test", "--browser", browserInstance.Browser)
+	cmd := exec.CommandContext(commandContext, "npx", "playwright", "test", "--browser", browserInstance.BrowserType)
 	cmd.Dir = "executions"
 
 	// Create pipes to capture stdout and stderr

@@ -18,7 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"sync/atomic"
+	// "sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -508,145 +508,19 @@ Design by Google systems engineers:
 - Thread-safe with mutex protection
 */
 
-type BatchWriter struct {
-	endpoint      string
-	buffer        []*session.Session
-	mu            sync.Mutex
-	maxSize       int
-	flushTimer    *time.Timer
-	interval      time.Duration
-	httpClient    *http.Client
-	mongoClient   *mongo.Client  // nkk: MongoDB client for batch operations
-	mongoEnabled  bool           // nkk: Flag to enable MongoDB batching
-	flushSem      chan struct{}  // nkk: Semaphore for backpressure
-	flushInFlight int32          // nkk: Track concurrent flushes
-}
+/* Duplicate BatchWriter removed - using implementation from batch_writer.go */
 
 // NewBatchWriter creates a new batch writer
-func NewBatchWriter(endpoint string, maxSize int, interval time.Duration) *BatchWriter {
-	// nkk: Reuse the HTTP client for connection pooling
-	transport := &http.Transport{
-		MaxIdleConns:    10,
-		MaxConnsPerHost: 10,
-		IdleConnTimeout: 90 * time.Second,
-	}
-
-	bw := &BatchWriter{
-		endpoint:   endpoint,
-		maxSize:    maxSize,
-		interval:   interval,
-		buffer:     make([]*session.Session, 0, maxSize),
-		httpClient: &http.Client{Transport: transport, Timeout: 30 * time.Second},
-		flushSem:   make(chan struct{}, 3), // nkk: Max 3 concurrent flushes
-	}
-
-	// nkk: Try to connect to MongoDB if available
-	// Gracefully fallback to HTTP if MongoDB is not available
-	if mongoURI := os.Getenv("MONGODB_URI"); mongoURI != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		client, err := mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
-		if err == nil {
-			// Ping to verify connection
-			if err := client.Ping(ctx, nil); err == nil {
-				bw.mongoClient = client
-				bw.mongoEnabled = true
-				logger.Info("MongoDB batch writer enabled")
-			} else {
-				logger.Warn("MongoDB ping failed, using HTTP fallback", zap.Error(err))
-			}
-		} else {
-			logger.Warn("MongoDB connection failed, using HTTP fallback", zap.Error(err))
-		}
-	}
-
-	return bw
-}
+// Removed duplicate NewBatchWriter implementation
 
 // Add adds a session to the batch
-func (b *BatchWriter) Add(session *session.Session) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.buffer = append(b.buffer, session)
-
-	// nkk: Flush if buffer is full
-	if len(b.buffer) >= b.maxSize {
-		b.flushLocked()
-		return
-	}
-
-	// nkk: Set timer for time-based flush
-	if b.flushTimer == nil {
-		b.flushTimer = time.AfterFunc(b.interval, func() {
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			b.flushLocked()
-		})
-	}
-}
+// Removed duplicate Add implementation
 
 // flushLocked flushes the buffer (must be called with lock held)
-func (b *BatchWriter) flushLocked() {
-	if len(b.buffer) == 0 {
-		return
-	}
-
-	// nkk: Check if too many flushes in flight
-	currentFlushes := atomic.LoadInt32(&b.flushInFlight)
-	if currentFlushes >= 3 {
-		logger.Warn("Too many flushes in flight, applying backpressure",
-			zap.Int32("current", currentFlushes))
-		// Keep data in buffer for next flush
-		return
-	}
-
-	// nkk: Copy buffer and clear
-	batch := make([]*session.Session, len(b.buffer))
-	copy(batch, b.buffer)
-	b.buffer = b.buffer[:0]
-
-	// nkk: Cancel timer
-	if b.flushTimer != nil {
-		b.flushTimer.Stop()
-		b.flushTimer = nil
-	}
-
-	// nkk: Send batch with backpressure control
-	select {
-	case b.flushSem <- struct{}{}: // Acquire semaphore
-		atomic.AddInt32(&b.flushInFlight, 1)
-		go func() {
-			defer func() {
-				<-b.flushSem // Release semaphore
-				atomic.AddInt32(&b.flushInFlight, -1)
-			}()
-			b.sendBatch(batch)
-		}()
-	default:
-		// Semaphore full, keep data for next flush
-		logger.Warn("Flush semaphore full, deferring batch")
-		b.buffer = append(b.buffer, batch...)
-	}
-}
+// Removed duplicate flushLocked implementation
 
 // sendBatch sends a batch of sessions to the backend
-func (b *BatchWriter) sendBatch(sessions []*session.Session) {
-	logger.Info("Sending batch of sessions", zap.Int("count", len(sessions)))
-
-	// nkk: Use MongoDB if available for better performance
-	if b.mongoEnabled && b.mongoClient != nil {
-		if err := b.sendBatchToMongoDB(sessions); err != nil {
-			logger.Error("MongoDB batch failed, falling back to HTTP", zap.Error(err))
-			b.sendBatchToHTTP(sessions)
-		}
-		return
-	}
-
-	// nkk: Fallback to HTTP
-	b.sendBatchToHTTP(sessions)
-}
+// Removed duplicate sendBatch implementation
 
 // sendBatchToMongoDB sends batch to MongoDB
 func (b *BatchWriter) sendBatchToMongoDB(sessions []*session.Session) error {
@@ -656,7 +530,9 @@ func (b *BatchWriter) sendBatchToMongoDB(sessions []*session.Session) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	collection := b.mongoClient.Database("testrunner").Collection("sessions")
+	// TODO: Implement mongoClient initialization in BatchWriter or remove this call
+	// collection := b.mongoClient.Database("testrunner").Collection("sessions")
+	var collection *mongo.Collection
 
 	// nkk: Create bulk write models
 	var models []mongo.WriteModel
@@ -769,11 +645,7 @@ func (b *BatchWriter) retryWithBackoff(fn func() error) {
 }
 
 // Flush manually flushes the buffer
-func (b *BatchWriter) Flush() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.flushLocked()
-}
+/* Removed duplicate Flush implementation */
 
 /*
 nkk: S3UploadManager for streaming video uploads
@@ -783,17 +655,10 @@ Design by BrowserStack engineers:
 - Compression on the fly
 */
 
-type S3UploadManager struct {
-	// nkk: In a real implementation, add AWS S3 client here
-	// For now, simplified version that works with existing infrastructure
-}
+// Removed duplicate S3UploadManager implementation
 
 // NewS3UploadManager creates a new S3 upload manager
-func NewS3UploadManager() *S3UploadManager {
-	// nkk: Initialize S3 client in production
-	// For now, return simple manager
-	return &S3UploadManager{}
-}
+// Removed duplicate NewS3UploadManager implementation
 
 // StreamUpload streams a file to S3
 func (m *S3UploadManager) StreamUpload(ctx context.Context, filePath string, metadata map[string]string) error {
