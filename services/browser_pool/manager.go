@@ -47,19 +47,30 @@ type BrowserInstance struct {
 
 // BrowserPoolManager manages browser containers
 type BrowserPoolManager struct {
-	docker     *client.Client
-	pool       chan *BrowserInstance
-	inUse      sync.Map
-	maxSize    int
-	mu         sync.Mutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	shutdownCh chan struct{}
+	docker          *client.Client
+	pool            chan *BrowserInstance
+	inUse           sync.Map
+	maxSize         int
+	mu              sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	shutdownCh      chan struct{}
+	dockerAvailable bool // Track if Docker is available
 }
 
 // nkk: Simple constructor - no over-engineering
 func NewBrowserPoolManager(maxSize int) (*BrowserPoolManager, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m := &BrowserPoolManager{
+		pool:            make(chan *BrowserInstance, maxSize),
+		maxSize:         maxSize,
+		ctx:             ctx,
+		cancel:          cancel,
+		shutdownCh:      make(chan struct{}),
+		dockerAvailable: false,
+	}
+
 	// nkk: Initialize Docker client with proper socket detection
 	// Try different Docker socket paths for Mac/Linux compatibility
 	docker, err := client.NewClientWithOpts(
@@ -76,20 +87,33 @@ func NewBrowserPoolManager(maxSize int) (*BrowserPoolManager, error) {
 		)
 	}
 
-	// HTTP client is configured at initialization, not after
+	// Check if Docker is available
 	if err != nil {
-		return nil, fmt.Errorf("failed to create docker client: %w", err)
+		logger.Warn("Docker not available - browser pool will run in degraded mode",
+			zap.Error(err))
+		logger.Info("BrowserPoolManager initialized (Docker unavailable)",
+			zap.Int("max_size", maxSize),
+			zap.Bool("docker_available", false))
+		return m, nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	m := &BrowserPoolManager{
-		docker:     docker,
-		pool:       make(chan *BrowserInstance, maxSize),
-		maxSize:    maxSize,
-		ctx:        ctx,
-		cancel:     cancel,
-		shutdownCh: make(chan struct{}),
+	// Verify Docker daemon is accessible
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pingCancel()
+	
+	_, err = docker.Ping(pingCtx)
+	if err != nil {
+		logger.Warn("Docker daemon not responding - browser pool will run in degraded mode",
+			zap.Error(err))
+		docker.Close()
+		logger.Info("BrowserPoolManager initialized (Docker daemon not responding)",
+			zap.Int("max_size", maxSize),
+			zap.Bool("docker_available", false))
+		return m, nil
 	}
+
+	m.docker = docker
+	m.dockerAvailable = true
 
 	// nkk: Pre-warm with proper lifecycle management
 	m.wg.Add(1)
@@ -105,7 +129,9 @@ func NewBrowserPoolManager(maxSize int) (*BrowserPoolManager, error) {
 		m.cleanupStaleInstances()
 	}()
 
-	logger.Info("BrowserPoolManager initialized", zap.Int("max_size", maxSize))
+	logger.Info("BrowserPoolManager initialized",
+		zap.Int("max_size", maxSize),
+		zap.Bool("docker_available", true))
 	return m, nil
 }
 
@@ -318,23 +344,28 @@ func (m *BrowserPoolManager) Shutdown() {
 	// Stop accepting new requests
 	close(m.pool)
 
-	// Destroy pooled containers
-	for instance := range m.pool {
-		m.destroyContainer(instance.ContainerID)
-	}
+	// Only clean up if Docker is available
+	if m.dockerAvailable {
+		// Destroy pooled containers
+		for instance := range m.pool {
+			m.destroyContainer(instance.ContainerID)
+		}
 
-	// Destroy in-use containers
-	m.inUse.Range(func(key, value interface{}) bool {
-		instance := value.(*BrowserInstance)
-		m.destroyContainer(instance.ContainerID)
-		return true
-	})
+		// Destroy in-use containers
+		m.inUse.Range(func(key, value interface{}) bool {
+			instance := value.(*BrowserInstance)
+			m.destroyContainer(instance.ContainerID)
+			return true
+		})
+	}
 
 	// Wait for all goroutines
 	m.wg.Wait()
 
-	// Close Docker client
-	m.docker.Close()
+	// Close Docker client if available
+	if m.docker != nil {
+		m.docker.Close()
+	}
 
 	logger.Info("BrowserPoolManager shutdown complete")
 }

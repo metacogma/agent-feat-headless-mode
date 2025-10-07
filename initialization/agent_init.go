@@ -38,7 +38,7 @@ func EnsureConfigFile() (*os.File, error) {
 	return machineConfigFile, nil
 }
 
-func EnsureRegistration(apxconfig *config.ApxConfig, autotestBridgeSvc *autotestbridge.AutotestBridgeService, isBackground bool) (string, error) {
+func EnsureRegistration(apxconfig *config.ApxConfig, autotestBridgeSvc *autotestbridge.AutotestBridgeService, isBackground bool, testMode bool) (string, error) {
 	machineConfigFile, err := EnsureConfigFile()
 	if err != nil {
 		logger.Error("error creating machine config file", err)
@@ -86,33 +86,44 @@ func EnsureRegistration(apxconfig *config.ApxConfig, autotestBridgeSvc *autotest
 			return "", err
 		}
 
-		_, err = autotestBridgeSvc.InsertLocalDevice(apxconfig.ToLocalDevice(), machineId)
-		if err != nil {
-			logger.Error("error inserting local device", err)
-			return "", err
+		// Skip external service call in test mode
+		if !testMode {
+			_, err = autotestBridgeSvc.InsertLocalDevice(apxconfig.ToLocalDevice(), machineId)
+			if err != nil {
+				logger.Error("error inserting local device", err)
+				return "", err
+			}
+		} else {
+			logger.Info("Test mode: skipping device registration")
 		}
 
 	} else {
 		machineId = apxconfig.MachineId
-		parsedUrl, err := url.Parse(apxconfig.ServerDomain + "/checkDeviceRegistration")
-		if err != nil {
-			logger.Error("error parsing url", err)
-			return "", err
+		
+		// Skip external service call in test mode
+		if !testMode {
+			parsedUrl, err := url.Parse(apxconfig.ServerDomain + "/checkDeviceRegistration")
+			if err != nil {
+				logger.Error("error parsing url", err)
+				return "", err
+			}
+			queryParams := url.Values{}
+			queryParams.Add("machineId", machineId)
+			parsedUrl.RawQuery = queryParams.Encode()
+			res, err := http.Get(parsedUrl.String())
+			if err != nil {
+				logger.Error("error getting registration status", err)
+				//FIX ME : Add retry logic
+				// handle based on error scenarios : 1) service not available , 2) document not present in mongo.
+				return "", err
+			}
+			defer res.Body.Close()
+		} else {
+			logger.Info("Test mode: skipping registration check")
 		}
-		queryParams := url.Values{}
-		queryParams.Add("machineId", machineId)
-		parsedUrl.RawQuery = queryParams.Encode()
-		res, err := http.Get(parsedUrl.String())
-		if err != nil {
-			logger.Error("error getting registration status", err)
-			//FIX ME : Add retry logic
-			// handle based on error scenarios : 1) service not available , 2) document not present in mongo.
-			return "", err
-		}
-		defer res.Body.Close()
 	}
 
-	if isBackground {
+	if isBackground || testMode {
 		return machineId, nil
 	}
 
